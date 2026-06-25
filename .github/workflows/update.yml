@@ -3,7 +3,7 @@ name: Update DREAM index ridge radar
 on:
   workflow_dispatch:
   schedule:
-    - cron: "35 22 * * 1-5"
+  - cron: "35 14,16,18,20,22 * * 1-5"
   push:
     branches: ["main"]
     paths:
