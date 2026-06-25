@@ -64,10 +64,35 @@ def load_config() -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def reset_with_date(df: pd.DataFrame) -> pd.DataFrame:
+    """Reset index and force the first column to be lowercase 'date'.
+
+    This avoids yfinance/pandas variations such as Date, Datetime, index,
+    or unnamed index columns breaking downstream JSON export.
+    """
+    out = df.reset_index().copy()
+    if out.empty:
+        out["date"] = pd.Series(dtype="datetime64[ns]")
+        return out
+
+    first_col = out.columns[0]
+    if first_col != "date":
+        out = out.rename(columns={first_col: "date"})
+
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    out = out.dropna(subset=["date"]).copy()
+    return out
+
+
 def as_records(df: pd.DataFrame, cols: List[str], digits: int = 4) -> List[Dict[str, Any]]:
     records: List[Dict[str, Any]] = []
     if df.empty:
         return records
+
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise KeyError(f"missing JSON export columns: {missing}")
+
     for _, row in df.iterrows():
         item: Dict[str, Any] = {}
         for col in cols:
@@ -101,15 +126,17 @@ def fetch_yfinance(symbol: str, period: str = "max") -> Tuple[pd.DataFrame, str]
         raise RuntimeError("empty yfinance result")
 
     if isinstance(data.columns, pd.MultiIndex):
-        data.columns = [c[0] for c in data.columns]
+        data.columns = [str(c[0]) for c in data.columns]
 
     close_col = "Close" if "Close" in data.columns else data.columns[-1]
     out = data[[close_col]].rename(columns={close_col: "close"}).dropna().copy()
     out = out[out["close"] > 0]
     out.index = pd.to_datetime(out.index).tz_localize(None)
     out = out[~out.index.duplicated(keep="last")].sort_index()
+
     if out.empty:
         raise RuntimeError("no valid positive close values")
+
     return out, "yfinance"
 
 
@@ -133,6 +160,7 @@ def fit_s2_retention(ret_window: pd.Series) -> Dict[str, Any]:
     x = ret_window.dropna().to_numpy(dtype=float)
     n = len(x)
     raw_std = float(np.nanstd(x))
+
     if n < 220 or raw_std <= EPS:
         return {"ok": False, "reason": "small_or_flat"}
 
@@ -146,6 +174,7 @@ def fit_s2_retention(ret_window: pd.Series) -> Dict[str, Any]:
         sm = s.rolling(w, min_periods=max(2, int(w * 0.7))).mean().dropna().to_numpy(dtype=float)
         if len(sm) < 10:
             continue
+
         val = float(np.nanstd(sm) / raw_std)
         if math.isfinite(val) and 0 < val < 1:
             r_vals.append(min(max(val, 1e-5), 0.99999))
@@ -156,19 +185,23 @@ def fit_s2_retention(ret_window: pd.Series) -> Dict[str, Any]:
 
     w_arr = np.asarray(used_ws, dtype=float)
     r_arr = np.asarray(r_vals, dtype=float)
+
     y = np.log(-np.log(r_arr))
     xlog = np.log(w_arr)
+
     if not np.isfinite(y).all():
         return {"ok": False, "reason": "nonfinite_fit_points"}
 
     beta, intercept = np.polyfit(xlog, y, 1)
     beta = float(beta)
     intercept = float(intercept)
+
     if not math.isfinite(beta) or abs(beta) <= EPS:
         return {"ok": False, "reason": "bad_beta"}
 
     lam = float(np.exp(-intercept / beta))
     pred = intercept + beta * xlog
+
     sse = float(np.sum((y - pred) ** 2))
     sst = float(np.sum((y - np.mean(y)) ** 2))
     r2 = 1.0 - sse / sst if sst > EPS else 0.0
@@ -176,9 +209,11 @@ def fit_s2_retention(ret_window: pd.Series) -> Dict[str, Any]:
     intercept_d1 = float(np.mean(y - xlog))
     pred_d1 = intercept_d1 + xlog
     sse_d1 = float(np.sum((y - pred_d1) ** 2))
+
     m = len(y)
     bic_s2 = m * math.log(max(sse / m, EPS)) + 2 * math.log(m)
     bic_d1 = m * math.log(max(sse_d1 / m, EPS)) + 1 * math.log(m)
+
     boundary = beta < 0.15 or beta > 5.0 or lam < min(w_arr) / 3 or lam > max(w_arr) * 20
 
     return {
@@ -196,6 +231,7 @@ def fit_s2_retention(ret_window: pd.Series) -> Dict[str, Any]:
 
 def rolling_s2(ret: pd.Series, window: int, stride: int) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
+
     if len(ret.dropna()) < window:
         return pd.DataFrame()
 
@@ -209,6 +245,7 @@ def rolling_s2(ret: pd.Series, window: int, stride: int) -> pd.DataFrame:
         return pd.DataFrame()
 
     fits = pd.DataFrame(rows).set_index("date").sort_index()
+
     for col in ["lambda_q", "beta", "r2", "delta_bic_vs_d1"]:
         fits[col] = pd.to_numeric(fits.get(col), errors="coerce")
 
@@ -222,13 +259,16 @@ def rolling_s2(ret: pd.Series, window: int, stride: int) -> pd.DataFrame:
         + 0.20 * fits["fit_failure_rate"].fillna(0)
     )
     fits["lambda_flicker_score"] = fits["lambda_flicker_score"].clip(0, 100)
+
     return fits
 
 
 def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame]:
     s = df.copy().sort_index()
     s = s[s["close"] > 0]
-    if len(s) < int(cfg["settings"].get("min_rows", 650)):
+
+    min_rows = int(cfg["settings"].get("min_rows", 650))
+    if len(s) < min_rows:
         raise RuntimeError(f"not enough rows after cleaning: {len(s)}")
 
     s["log_close"] = np.log(s["close"])
@@ -236,6 +276,7 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
 
     spans = cfg["settings"].get("ridge_spans", [21, 63, 126, 252])
     ridge_cols: List[str] = []
+
     for span in spans:
         span_i = int(span)
         col = f"ridge_{span_i}"
@@ -248,8 +289,10 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
 
     dust_w = int(cfg["settings"].get("dust_window", 63))
     base_w = int(cfg["settings"].get("baseline_window", 252))
+
     dust_med = s["dust"].rolling(dust_w, min_periods=max(15, dust_w // 3)).median()
     dust_mad = (s["dust"] - dust_med).abs().rolling(dust_w, min_periods=max(15, dust_w // 3)).median()
+
     s["dust_sigma"] = (1.4826 * dust_mad).replace(0, np.nan).ffill()
     s["dust_z"] = robust_z(s["dust_sigma"], base_w, min_periods=80).clip(-4, 6)
     s["dust_accel"] = np.log(s["dust_sigma"].replace(0, np.nan)).diff(21)
@@ -271,11 +314,13 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
         int(cfg["settings"].get("rolling_s2_window", 512)),
         int(cfg["settings"].get("rolling_s2_stride", 5)),
     )
+
     for col in ["lambda_q", "beta", "r2", "delta_bic_vs_d1", "lambda_flicker_score"]:
         if not s2.empty and col in s2:
             s[col] = s2[col].reindex(s.index).ffill()
         else:
             s[col] = np.nan
+
     s["lambda_flicker_score"] = s["lambda_flicker_score"].fillna(0).clip(0, 100)
 
     dust_pressure = pd.Series(clip_score(s["dust_z"], 45, 13), index=s.index)
@@ -286,6 +331,7 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
     )
     flatten_score = pd.Series(clip_score(-s["ridge_curvature"].fillna(0) * 850, 40, 1), index=s.index).clip(0, 100)
     lambda_score = s["lambda_flicker_score"].fillna(0)
+
     s["risk_score"] = (
         0.27 * dust_pressure
         + 0.18 * dust_accel_score
@@ -298,23 +344,39 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
     above_ridge = pd.Series(clip_score(s["excursion"].clip(-3, 3), 48, 11), index=s.index).clip(0, 100)
     lambda_stable = (100 - s["lambda_flicker_score"].fillna(50)).clip(0, 100)
     dust_ok = (100 - (s["dust_z"].clip(lower=0) * 16)).clip(0, 100)
-    s["bull_raw_score"] = (0.42 * up_slope + 0.24 * above_ridge + 0.20 * lambda_stable + 0.14 * dust_ok).clip(0, 100)
+
+    s["bull_raw_score"] = (
+        0.42 * up_slope
+        + 0.24 * above_ridge
+        + 0.20 * lambda_stable
+        + 0.14 * dust_ok
+    ).clip(0, 100)
 
     s["ret_21"] = s["log_close"].diff(21)
     s["ret_63"] = s["log_close"].diff(63)
+
     risk_gate = ((s["risk_score"].fillna(0) - 45.0) / 35.0).clip(0, 1)
     neg_21_gate = ((-s["ret_21"].fillna(0) - 0.02) / 0.08).clip(0, 1)
     neg_63_gate = ((-s["ret_63"].fillna(0) - 0.04) / 0.14).clip(0, 1)
     drawdown_gate = ((-s["drawdown_252"].fillna(0) - 0.05) / 0.15).clip(0, 1)
     below_ridge_gate = ((-s["excursion"].fillna(0) - 0.25) / 1.75).clip(0, 1)
     lambda_gate = ((s["lambda_flicker_score"].fillna(0) - 45.0) / 35.0).clip(0, 1)
+
     s["crash_gate"] = pd.concat(
         [risk_gate, neg_21_gate, neg_63_gate, drawdown_gate, below_ridge_gate, lambda_gate],
         axis=1,
     ).max(axis=1).fillna(0).clip(0, 1)
-    s["bull_score"] = (s["bull_raw_score"] * np.power(1.0 - s["crash_gate"], 1.5)).clip(0, 100)
 
-    s["state"] = np.select([s["risk_score"] >= 75, s["risk_score"] >= 55], ["RED", "YELLOW"], default="GREEN")
+    s["bull_score"] = (
+        s["bull_raw_score"] * np.power(1.0 - s["crash_gate"], 1.5)
+    ).clip(0, 100)
+
+    s["state"] = np.select(
+        [s["risk_score"] >= 75, s["risk_score"] >= 55],
+        ["RED", "YELLOW"],
+        default="GREEN",
+    )
+
     return s, s2
 
 
@@ -322,12 +384,16 @@ def auc_score(y_true: np.ndarray, score: np.ndarray) -> Optional[float]:
     mask = np.isfinite(y_true) & np.isfinite(score)
     y = y_true[mask].astype(int)
     sc = score[mask].astype(float)
+
     n_pos = int(np.sum(y == 1))
     n_neg = int(np.sum(y == 0))
+
     if n_pos == 0 or n_neg == 0:
         return None
+
     ranks = pd.Series(sc).rank(method="average").to_numpy()
     rank_sum_pos = float(np.sum(ranks[y == 1]))
+
     return (rank_sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
 
 
@@ -335,13 +401,22 @@ def metric_at_threshold(y_true: np.ndarray, score: np.ndarray, threshold: float)
     mask = np.isfinite(y_true) & np.isfinite(score)
     y = y_true[mask].astype(int)
     pred = (score[mask] >= threshold).astype(int)
+
     if len(y) == 0:
-        return {"n": 0, "events": 0, "precision": None, "recall": None, "false_alert_rate": None, "hit_rate": None}
+        return {
+            "n": 0,
+            "events": 0,
+            "precision": None,
+            "recall": None,
+            "false_alert_rate": None,
+            "hit_rate": None,
+        }
 
     tp = int(np.sum((pred == 1) & (y == 1)))
     fp = int(np.sum((pred == 1) & (y == 0)))
     fn = int(np.sum((pred == 0) & (y == 1)))
     tn = int(np.sum((pred == 0) & (y == 0)))
+
     return {
         "n": int(len(y)),
         "events": int(np.sum(y == 1)),
@@ -359,10 +434,13 @@ def backtest_targets(feat: pd.DataFrame, cfg: Dict[str, Any], key: str, name: st
     for target in cfg["settings"].get("crash_targets", []):
         horizon = int(target["horizon_days"])
         threshold = float(target["threshold"])
+
         future = future_min_return(close, horizon)
         y = (future <= threshold).astype(float).where(future.notna(), np.nan).to_numpy()
+
         s2_score = feat["risk_score"].to_numpy(dtype=float)
         base_score = pd.Series(clip_score(feat["vol_z"].fillna(0), 45, 13), index=feat.index).to_numpy(dtype=float)
+
         rows.append({
             "index": key,
             "name": name,
@@ -385,10 +463,16 @@ def backtest_targets(feat: pd.DataFrame, cfg: Dict[str, Any], key: str, name: st
     for target in cfg["settings"].get("bull_targets", []):
         horizon = int(target["horizon_days"])
         threshold = float(target["threshold"])
+
         future = future_max_return(close, horizon)
         y = (future >= threshold).astype(float).where(future.notna(), np.nan).to_numpy()
+
         s2_score = feat["bull_score"].to_numpy(dtype=float)
-        base_score = pd.Series(clip_score(feat["ridge_slope_63"].fillna(0) * 550, 45, 1), index=feat.index).clip(0, 100).to_numpy(dtype=float)
+        base_score = pd.Series(
+            clip_score(feat["ridge_slope_63"].fillna(0) * 550, 45, 1),
+            index=feat.index,
+        ).clip(0, 100).to_numpy(dtype=float)
+
         rows.append({
             "index": key,
             "name": name,
@@ -413,18 +497,22 @@ def backtest_targets(feat: pd.DataFrame, cfg: Dict[str, Any], key: str, name: st
 
 def case_studies(feat: pd.DataFrame, key: str, name: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+
     for win in CRASH_WINDOWS + BULL_WINDOWS:
         start = pd.Timestamp(win["start"])
         end = pd.Timestamp(win["end"])
+
         if feat.index.max() < start or feat.index.min() > end:
             continue
 
         pre = feat.loc[(feat.index >= start - pd.Timedelta(days=120)) & (feat.index < start)]
         during = feat.loc[(feat.index >= start) & (feat.index <= end)]
+
         if pre.empty or during.empty:
             continue
 
         start_price = float(during["close"].iloc[0])
+
         if win["kind"] == "crash":
             move = float(during["close"].min()) / start_price - 1.0
             score_col = "risk_score"
@@ -436,6 +524,7 @@ def case_studies(feat: pd.DataFrame, key: str, name: str) -> List[Dict[str, Any]
 
         trigger = pre[pre[score_col] >= trigger_level]
         first_trigger = trigger.index[0] if not trigger.empty else None
+
         rows.append({
             "index": key,
             "name": name,
@@ -449,6 +538,7 @@ def case_studies(feat: pd.DataFrame, key: str, name: str) -> List[Dict[str, Any]
             "first_warning": first_trigger.strftime("%Y-%m-%d") if first_trigger is not None else None,
             "lead_days": int((start - first_trigger).days) if first_trigger is not None else None,
         })
+
     return rows
 
 
@@ -472,6 +562,7 @@ def make_narrative(cur: Dict[str, Any]) -> str:
     beta_txt = f"beta {beta:.2f}" if isinstance(beta, (int, float)) and math.isfinite(beta) else "beta unavailable"
     lam_txt = f"lambda_q {lam:.1f} sessions" if isinstance(lam, (int, float)) and math.isfinite(lam) else "lambda_q unavailable"
     gate_txt = f"crash gate {gate:.2f}" if isinstance(gate, (int, float)) and math.isfinite(gate) else "crash gate unavailable"
+
     return (
         f"{tone} Composite risk {risk:.1f}/100. Dust z {dust:.2f}, envelope excursion {excursion:.2f}, "
         f"lambda flicker {flicker:.1f}/100; {lam_txt}, {beta_txt}; {gate_txt}. "
@@ -481,6 +572,7 @@ def make_narrative(cur: Dict[str, Any]) -> str:
 
 def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     feat, s2 = compute_features(raw, cfg)
+
     key = info["key"]
     name = info["name"]
     latest = feat.dropna(subset=["close"]).iloc[-1]
@@ -506,26 +598,50 @@ def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cf
         "drawdown_252": clean_float(latest["drawdown_252"], 4),
     }
 
-    feats_for_json = feat.reset_index().rename(columns={"index": "date"})
+    feats_for_json = reset_with_date(feat)
+
     keep_cols = [
-        "date", "close", "ridge_price", "risk_score", "bull_score", "bull_raw_score", "crash_gate",
-        "dust_z", "dust_accel_z", "excursion", "lambda_q", "beta", "lambda_flicker_score",
-        "drawdown_252", "vol_20", "envelope_hi", "envelope_lo",
+        "date",
+        "close",
+        "ridge_price",
+        "risk_score",
+        "bull_score",
+        "bull_raw_score",
+        "crash_gate",
+        "dust_z",
+        "dust_accel_z",
+        "excursion",
+        "lambda_q",
+        "beta",
+        "lambda_flicker_score",
+        "drawdown_252",
+        "vol_20",
+        "envelope_hi",
+        "envelope_lo",
     ]
 
     recent = feats_for_json.tail(1300)
+
     monthly = feats_for_json.iloc[::21].copy()
+
     event_mask = pd.Series(False, index=feat.index)
     for win in CRASH_WINDOWS + BULL_WINDOWS:
         start = pd.Timestamp(win["start"]) - pd.Timedelta(days=80)
         end = pd.Timestamp(win["end"]) + pd.Timedelta(days=30)
         event_mask |= (feat.index >= start) & (feat.index <= end)
+
     event_rows = feats_for_json.loc[event_mask.to_numpy()].iloc[::5].copy()
-    long_df = pd.concat([monthly, event_rows]).drop_duplicates(subset=["date"]).sort_values("date")
+
+    long_df = (
+        pd.concat([monthly, event_rows], ignore_index=True)
+        .drop_duplicates(subset=["date"])
+        .sort_values("date")
+    )
 
     latest_s2 = pd.DataFrame()
     if not s2.empty:
-        latest_s2 = s2.reset_index().rename(columns={"index": "date"}).tail(260)
+        latest_s2 = reset_with_date(s2).tail(260)
+
     s2_tail_cols = ["date", "lambda_q", "beta", "r2", "delta_bic_vs_d1", "lambda_flicker_score"]
 
     return {
@@ -563,6 +679,7 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     red = states.count("RED")
     yellow = states.count("YELLOW")
+
     if red >= 3 or (red >= 1 and yellow >= 4):
         global_state = "RED"
     elif red >= 1 or yellow >= 3:
@@ -572,6 +689,7 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     leaders = sorted(indices, key=lambda x: x["current"].get("risk_score") or -1, reverse=True)[:5]
     bulls = sorted(indices, key=lambda x: x["current"].get("bull_score") or -1, reverse=True)[:5]
+
     return {
         "global_state": global_state,
         "index_count": len(indices),
@@ -582,8 +700,23 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
         "median_bull": clean_float(np.nanmedian(bull_scores), 2) if bull_scores else None,
         "median_dust_z": clean_float(np.nanmedian(dust), 2) if dust else None,
         "median_lambda_flicker": clean_float(np.nanmedian(flicker), 2) if flicker else None,
-        "top_risk": [{"key": x["key"], "name": x["name"], "risk_score": x["current"].get("risk_score"), "state": x["current"].get("state")} for x in leaders],
-        "top_bull": [{"key": x["key"], "name": x["name"], "bull_score": x["current"].get("bull_score")} for x in bulls],
+        "top_risk": [
+            {
+                "key": x["key"],
+                "name": x["name"],
+                "risk_score": x["current"].get("risk_score"),
+                "state": x["current"].get("state"),
+            }
+            for x in leaders
+        ],
+        "top_bull": [
+            {
+                "key": x["key"],
+                "name": x["name"],
+                "bull_score": x["current"].get("bull_score"),
+            }
+            for x in bulls
+        ],
     }
 
 
@@ -601,8 +734,10 @@ def main() -> int:
 
     cfg = load_config()
     universe = cfg.get("universe", [])
+
     if args.max_indices:
         universe = universe[: args.max_indices]
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     indices: List[Dict[str, Any]] = []
@@ -611,11 +746,15 @@ def main() -> int:
 
     for info in universe:
         key = info["key"]
+
         try:
             raw, source = fetch_yfinance(info["symbol"], cfg["settings"].get("lookback_period", "max"))
+
             if len(raw) < int(cfg["settings"].get("min_rows", 650)):
                 raise RuntimeError(f"too few live rows from yfinance: {len(raw)}")
+
             payload = build_index_payload(info, raw, source, cfg)
+
         except Exception as exc:
             msg = f"{key}: live fetch/compute failed: {str(exc)[:220]}"
             failure_messages.append(msg)
@@ -642,6 +781,7 @@ def main() -> int:
         )
 
     min_live_indices = int(cfg["settings"].get("min_live_indices", 8))
+
     if len(indices) < min_live_indices:
         raise SystemExit(
             f"LIVE-ONLY BUILD FAILED: only {len(indices)} live indices built; "
@@ -652,6 +792,7 @@ def main() -> int:
     backtests = flatten([x["backtest"] for x in indices])
     cases = flatten([x["case_studies"] for x in indices])
     summary = aggregate_summary(indices)
+
     mode = "public_index_history_live_only"
 
     payload = {
@@ -693,6 +834,7 @@ def main() -> int:
         f"wrote {OUT_PATH} ({OUT_PATH.stat().st_size / 1024:.1f} KB), "
         f"mode={mode}, indices={len(indices)}, failures={len(failure_messages)}"
     )
+
     return 0
 
 
