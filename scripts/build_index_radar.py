@@ -4,10 +4,9 @@
 Live-only policy:
 - Downloads public daily index history through yfinance.
 - Computes ridge, operational dust cloud, rolling S2 retention fits, event scores,
-  and historical crash/bull-run scorecards.
+  percentile-calibrated risk layers, and historical crash/bull-run scorecards.
 - Writes data/derived/market_ridge_radar.json for the static GitHub Pages app.
-- Does not generate synthetic/demo fallback data. If live data cannot be fetched
-  or computed for enough indices, the build fails.
+- Does not generate synthetic/demo fallback data.
 """
 from __future__ import annotations
 
@@ -65,11 +64,7 @@ def load_config() -> Dict[str, Any]:
 
 
 def reset_with_date(df: pd.DataFrame) -> pd.DataFrame:
-    """Reset index and force the first column to be lowercase 'date'.
-
-    This avoids yfinance/pandas variations such as Date, Datetime, index,
-    or unnamed index columns breaking downstream JSON export.
-    """
+    """Reset index and force the first column to lowercase date."""
     out = df.reset_index().copy()
     if out.empty:
         out["date"] = pd.Series(dtype="datetime64[ns]")
@@ -109,6 +104,25 @@ def robust_z(series: pd.Series, window: int = 252, min_periods: int = 60) -> pd.
     mad = (series - med).abs().rolling(window, min_periods=min_periods).median()
     z = (series - med) / (1.4826 * mad.replace(0, np.nan))
     return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def trailing_percentile_rank(series: pd.Series, window: int = 1260, min_periods: int = 252) -> pd.Series:
+    """Non-leaky rolling percentile rank of current value versus trailing history."""
+    def _rank(arr: np.ndarray) -> float:
+        vals = arr[np.isfinite(arr)]
+        if len(vals) == 0:
+            return np.nan
+        last = vals[-1]
+        return float(np.sum(vals <= last) / len(vals) * 100.0)
+
+    return (
+        series.astype(float)
+        .rolling(window, min_periods=min_periods)
+        .apply(_rank, raw=True)
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(50.0)
+        .clip(0, 100)
+    )
 
 
 def clip_score(x: Any, center: float = 50.0, scale: float = 12.5) -> np.ndarray:
@@ -247,12 +261,18 @@ def rolling_s2(ret: pd.Series, window: int, stride: int) -> pd.DataFrame:
     fits = pd.DataFrame(rows).set_index("date").sort_index()
 
     for col in ["lambda_q", "beta", "r2", "delta_bic_vs_d1"]:
-        fits[col] = pd.to_numeric(fits.get(col), errors="coerce")
+        if col not in fits:
+            fits[col] = np.nan
+        fits[col] = pd.to_numeric(fits[col], errors="coerce")
+
+    if "boundary" not in fits:
+        fits["boundary"] = False
 
     good_lambda = np.log(fits["lambda_q"].where(fits["lambda_q"] > 0))
     fits["lambda_flicker_raw"] = good_lambda.rolling(20, min_periods=5).std()
-    fits["boundary_rate"] = fits.get("boundary", False).astype(float).rolling(20, min_periods=5).mean()
+    fits["boundary_rate"] = fits["boundary"].fillna(False).astype(float).rolling(20, min_periods=5).mean()
     fits["fit_failure_rate"] = (~fits["ok"].astype(bool)).astype(float).rolling(20, min_periods=5).mean()
+
     fits["lambda_flicker_score"] = 100 * (
         0.55 * np.clip(fits["lambda_flicker_raw"].fillna(0) / 0.60, 0, 1)
         + 0.25 * fits["boundary_rate"].fillna(0)
@@ -323,25 +343,63 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
 
     s["lambda_flicker_score"] = s["lambda_flicker_score"].fillna(0).clip(0, 100)
 
-    dust_pressure = pd.Series(clip_score(s["dust_z"], 45, 13), index=s.index)
-    dust_accel_score = pd.Series(clip_score(s["dust_accel_z"], 45, 13), index=s.index)
+    dust_pressure = pd.Series(clip_score(s["dust_z"], 45, 13), index=s.index).clip(0, 100)
+    dust_accel_score = pd.Series(clip_score(s["dust_accel_z"], 45, 13), index=s.index).clip(0, 100)
+    vol_pressure = pd.Series(clip_score(s["vol_z"].fillna(0), 45, 13), index=s.index).clip(0, 100)
+
     pullback_score = 100 * (
         0.65 * np.clip((s["excursion"].abs() - 1.0) / 2.0, 0, 1)
         + 0.35 * s["pullback_persist"].fillna(0)
     )
-    flatten_score = pd.Series(clip_score(-s["ridge_curvature"].fillna(0) * 850, 40, 1), index=s.index).clip(0, 100)
-    lambda_score = s["lambda_flicker_score"].fillna(0)
 
-    s["risk_score"] = (
-        0.27 * dust_pressure
-        + 0.18 * dust_accel_score
-        + 0.24 * pullback_score
-        + 0.19 * lambda_score
-        + 0.12 * flatten_score
+    flatten_score = pd.Series(
+        clip_score(-s["ridge_curvature"].fillna(0) * 850, 40, 1),
+        index=s.index,
     ).clip(0, 100)
 
-    up_slope = pd.Series(clip_score(s["ridge_slope_63"].fillna(0) * 550, 45, 1), index=s.index).clip(0, 100)
-    above_ridge = pd.Series(clip_score(s["excursion"].clip(-3, 3), 48, 11), index=s.index).clip(0, 100)
+    lambda_score = s["lambda_flicker_score"].fillna(0).clip(0, 100)
+
+    drawdown_score = 100 * ((-s["drawdown_252"].fillna(0) - 0.05) / 0.20).clip(0, 1)
+
+    s["ridge_failure_score"] = (
+        0.30 * pullback_score
+        + 0.24 * lambda_score
+        + 0.22 * flatten_score
+        + 0.24 * drawdown_score
+    ).clip(0, 100)
+
+    coherent_dust = dust_pressure * ((100 - lambda_score) / 100.0)
+
+    s["first_notice_score"] = (
+        0.44 * dust_pressure
+        + 0.24 * dust_accel_score
+        + 0.20 * vol_pressure
+        + 0.12 * coherent_dust
+    ).clip(0, 100)
+
+    s["risk_score"] = (
+        0.40 * s["ridge_failure_score"]
+        + 0.35 * s["first_notice_score"]
+        + 0.15 * lambda_score
+        + 0.10 * drawdown_score
+    ).clip(0, 100)
+
+    s["risk_pct"] = trailing_percentile_rank(s["risk_score"])
+    s["ridge_failure_pct"] = trailing_percentile_rank(s["ridge_failure_score"])
+    s["first_notice_pct"] = trailing_percentile_rank(s["first_notice_score"])
+    s["dust_pct"] = trailing_percentile_rank(s["dust_z"])
+    s["vol_pct"] = trailing_percentile_rank(s["vol_20"])
+
+    up_slope = pd.Series(
+        clip_score(s["ridge_slope_63"].fillna(0) * 550, 45, 1),
+        index=s.index,
+    ).clip(0, 100)
+
+    above_ridge = pd.Series(
+        clip_score(s["excursion"].clip(-3, 3), 48, 11),
+        index=s.index,
+    ).clip(0, 100)
+
     lambda_stable = (100 - s["lambda_flicker_score"].fillna(50)).clip(0, 100)
     dust_ok = (100 - (s["dust_z"].clip(lower=0) * 16)).clip(0, 100)
 
@@ -355,7 +413,7 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
     s["ret_21"] = s["log_close"].diff(21)
     s["ret_63"] = s["log_close"].diff(63)
 
-    risk_gate = ((s["risk_score"].fillna(0) - 45.0) / 35.0).clip(0, 1)
+    risk_gate = ((s["risk_pct"].fillna(50) - 80.0) / 20.0).clip(0, 1)
     neg_21_gate = ((-s["ret_21"].fillna(0) - 0.02) / 0.08).clip(0, 1)
     neg_63_gate = ((-s["ret_63"].fillna(0) - 0.04) / 0.14).clip(0, 1)
     drawdown_gate = ((-s["drawdown_252"].fillna(0) - 0.05) / 0.15).clip(0, 1)
@@ -371,8 +429,38 @@ def compute_features(df: pd.DataFrame, cfg: Dict[str, Any]) -> Tuple[pd.DataFram
         s["bull_raw_score"] * np.power(1.0 - s["crash_gate"], 1.5)
     ).clip(0, 100)
 
+    s["ridge_state"] = np.select(
+        [
+            (s["ridge_failure_pct"] >= 95) | (s["ridge_failure_score"] >= 72),
+            (s["ridge_failure_pct"] >= 85) | (s["ridge_failure_score"] >= 55),
+        ],
+        ["RED", "YELLOW"],
+        default="GREEN",
+    )
+
+    s["dust_state"] = np.select(
+        [
+            (s["dust_z"] >= 4.0) | (s["first_notice_pct"] >= 95),
+            (s["dust_z"] >= 2.0) | (s["first_notice_pct"] >= 85),
+        ],
+        ["RED", "YELLOW"],
+        default="GREEN",
+    )
+
+    s["event_state"] = np.select(
+        [
+            (s["ridge_state"] == "RED") | ((s["risk_pct"] >= 95) & (s["first_notice_pct"] >= 85)),
+            (s["ridge_state"] == "YELLOW") | (s["dust_state"] == "RED") | (s["risk_pct"] >= 85),
+        ],
+        ["RED", "YELLOW"],
+        default="GREEN",
+    )
+
     s["state"] = np.select(
-        [s["risk_score"] >= 75, s["risk_score"] >= 55],
+        [
+            s["event_state"] == "RED",
+            (s["event_state"] == "YELLOW") | (s["dust_state"] == "RED") | (s["dust_state"] == "YELLOW"),
+        ],
         ["RED", "YELLOW"],
         default="GREEN",
     )
@@ -438,27 +526,24 @@ def backtest_targets(feat: pd.DataFrame, cfg: Dict[str, Any], key: str, name: st
         future = future_min_return(close, horizon)
         y = (future <= threshold).astype(float).where(future.notna(), np.nan).to_numpy()
 
-        s2_score = feat["risk_score"].to_numpy(dtype=float)
-        base_score = pd.Series(clip_score(feat["vol_z"].fillna(0), 45, 13), index=feat.index).to_numpy(dtype=float)
+        models = [
+            ("S2 full stack pct", feat["risk_pct"].to_numpy(dtype=float), 85),
+            ("S2 first-notice pct", feat["first_notice_pct"].to_numpy(dtype=float), 85),
+            ("S2 ridge-failure pct", feat["ridge_failure_pct"].to_numpy(dtype=float), 85),
+            ("baseline vol pct", feat["vol_pct"].to_numpy(dtype=float), 85),
+            ("baseline vol-only raw", pd.Series(clip_score(feat["vol_z"].fillna(0), 45, 13), index=feat.index).to_numpy(dtype=float), 70),
+        ]
 
-        rows.append({
-            "index": key,
-            "name": name,
-            "target": target["key"],
-            "label": target["label"],
-            "model": "S2 ridge+dust+lambda",
-            "auc": clean_float(auc_score(y, s2_score), 4),
-            **metric_at_threshold(y, s2_score, 70),
-        })
-        rows.append({
-            "index": key,
-            "name": name,
-            "target": target["key"],
-            "label": target["label"],
-            "model": "baseline vol-only",
-            "auc": clean_float(auc_score(y, base_score), 4),
-            **metric_at_threshold(y, base_score, 70),
-        })
+        for model_name, score, trigger in models:
+            rows.append({
+                "index": key,
+                "name": name,
+                "target": target["key"],
+                "label": target["label"],
+                "model": model_name,
+                "auc": clean_float(auc_score(y, score), 4),
+                **metric_at_threshold(y, score, trigger),
+            })
 
     for target in cfg["settings"].get("bull_targets", []):
         horizon = int(target["horizon_days"])
@@ -478,7 +563,7 @@ def backtest_targets(feat: pd.DataFrame, cfg: Dict[str, Any], key: str, name: st
             "name": name,
             "target": target["key"],
             "label": target["label"],
-            "model": "S2 coherent bull-thrust",
+            "model": "S2 coherent bull-inertia",
             "auc": clean_float(auc_score(y, s2_score), 4),
             **metric_at_threshold(y, s2_score, 65),
         })
@@ -515,8 +600,8 @@ def case_studies(feat: pd.DataFrame, key: str, name: str) -> List[Dict[str, Any]
 
         if win["kind"] == "crash":
             move = float(during["close"].min()) / start_price - 1.0
-            score_col = "risk_score"
-            trigger_level = 55
+            score_col = "risk_pct"
+            trigger_level = 85
         else:
             move = float(during["close"].max()) / start_price - 1.0
             score_col = "bull_score"
@@ -544,7 +629,17 @@ def case_studies(feat: pd.DataFrame, key: str, name: str) -> List[Dict[str, Any]
 
 def make_narrative(cur: Dict[str, Any]) -> str:
     state = cur.get("state") or "NA"
+    ridge_state = cur.get("ridge_state") or "NA"
+    dust_state = cur.get("dust_state") or "NA"
+    event_state = cur.get("event_state") or "NA"
+
     risk = cur.get("risk_score") or 0
+    risk_pct = cur.get("risk_pct")
+    first_notice = cur.get("first_notice_score")
+    first_notice_pct = cur.get("first_notice_pct")
+    ridge_failure = cur.get("ridge_failure_score")
+    ridge_failure_pct = cur.get("ridge_failure_pct")
+
     dust = cur.get("dust_z") or 0
     flicker = cur.get("lambda_flicker_score") or 0
     excursion = cur.get("excursion") or 0
@@ -553,20 +648,28 @@ def make_narrative(cur: Dict[str, Any]) -> str:
     gate = cur.get("crash_gate")
 
     if state == "RED":
-        tone = "Red: ridge coherence is stressed and the correction-risk stack is active."
+        tone = "Red: active ridge/event stress is present."
     elif state == "YELLOW":
-        tone = "Yellow: the retained ridge is present, but dust pressure or lambda stability is no longer quiet."
+        tone = "Yellow: the ridge may still hold, but dust pressure or event percentile is no longer quiet."
     else:
-        tone = "Green: the retained ridge is absorbing noise; no structural break flag is active."
+        tone = "Green: retained ridge structure is stable and dust pressure is not elevated."
 
     beta_txt = f"beta {beta:.2f}" if isinstance(beta, (int, float)) and math.isfinite(beta) else "beta unavailable"
     lam_txt = f"lambda_q {lam:.1f} sessions" if isinstance(lam, (int, float)) and math.isfinite(lam) else "lambda_q unavailable"
     gate_txt = f"crash gate {gate:.2f}" if isinstance(gate, (int, float)) and math.isfinite(gate) else "crash gate unavailable"
 
+    rn = f"{ridge_failure:.1f}" if isinstance(ridge_failure, (int, float)) and math.isfinite(ridge_failure) else "NA"
+    rp = f"{ridge_failure_pct:.0f}th pct" if isinstance(ridge_failure_pct, (int, float)) and math.isfinite(ridge_failure_pct) else "NA pct"
+    fn = f"{first_notice:.1f}" if isinstance(first_notice, (int, float)) and math.isfinite(first_notice) else "NA"
+    fp = f"{first_notice_pct:.0f}th pct" if isinstance(first_notice_pct, (int, float)) and math.isfinite(first_notice_pct) else "NA pct"
+    risk_pct_txt = f"{risk_pct:.0f}th pct" if isinstance(risk_pct, (int, float)) and math.isfinite(risk_pct) else "NA pct"
+
     return (
-        f"{tone} Composite risk {risk:.1f}/100. Dust z {dust:.2f}, envelope excursion {excursion:.2f}, "
-        f"lambda flicker {flicker:.1f}/100; {lam_txt}, {beta_txt}; {gate_txt}. "
-        "Research-only structural health read."
+        f"{tone} Composite risk {risk:.1f}/100 ({risk_pct_txt}). "
+        f"Ridge {ridge_state}: failure {rn} ({rp}). "
+        f"Dust {dust_state}: first-notice {fn} ({fp}), dust z {dust:.2f}. "
+        f"Event {event_state}; excursion {excursion:.2f}, lambda flicker {flicker:.1f}/100; "
+        f"{lam_txt}, {beta_txt}; {gate_txt}. Research-only structural health read."
     )
 
 
@@ -582,11 +685,20 @@ def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cf
         "close": clean_float(latest["close"], 4),
         "ridge_price": clean_float(latest["ridge_price"], 4),
         "risk_score": clean_float(latest["risk_score"], 2),
+        "risk_pct": clean_float(latest["risk_pct"], 2),
+        "ridge_failure_score": clean_float(latest["ridge_failure_score"], 2),
+        "ridge_failure_pct": clean_float(latest["ridge_failure_pct"], 2),
+        "first_notice_score": clean_float(latest["first_notice_score"], 2),
+        "first_notice_pct": clean_float(latest["first_notice_pct"], 2),
         "bull_score": clean_float(latest["bull_score"], 2),
         "bull_raw_score": clean_float(latest["bull_raw_score"], 2),
         "crash_gate": clean_float(latest["crash_gate"], 4),
         "state": str(latest["state"]),
+        "ridge_state": str(latest["ridge_state"]),
+        "dust_state": str(latest["dust_state"]),
+        "event_state": str(latest["event_state"]),
         "dust_z": clean_float(latest["dust_z"], 2),
+        "dust_pct": clean_float(latest["dust_pct"], 2),
         "dust_accel_z": clean_float(latest["dust_accel_z"], 2),
         "excursion": clean_float(latest["excursion"], 2),
         "lambda_q": clean_float(latest["lambda_q"], 2),
@@ -595,6 +707,7 @@ def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cf
         "delta_bic_vs_d1": clean_float(latest["delta_bic_vs_d1"], 2),
         "lambda_flicker_score": clean_float(latest["lambda_flicker_score"], 2),
         "vol_20": clean_float(latest["vol_20"], 4),
+        "vol_pct": clean_float(latest["vol_pct"], 2),
         "drawdown_252": clean_float(latest["drawdown_252"], 4),
     }
 
@@ -605,10 +718,16 @@ def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cf
         "close",
         "ridge_price",
         "risk_score",
+        "risk_pct",
+        "ridge_failure_score",
+        "ridge_failure_pct",
+        "first_notice_score",
+        "first_notice_pct",
         "bull_score",
         "bull_raw_score",
         "crash_gate",
         "dust_z",
+        "dust_pct",
         "dust_accel_z",
         "excursion",
         "lambda_q",
@@ -616,12 +735,12 @@ def build_index_payload(info: Dict[str, Any], raw: pd.DataFrame, source: str, cf
         "lambda_flicker_score",
         "drawdown_252",
         "vol_20",
+        "vol_pct",
         "envelope_hi",
         "envelope_lo",
     ]
 
     recent = feats_for_json.tail(1300)
-
     monthly = feats_for_json.iloc[::21].copy()
 
     event_mask = pd.Series(False, index=feat.index)
@@ -676,6 +795,8 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
     bull_scores = [idx["current"].get("bull_score") for idx in indices if idx["current"].get("bull_score") is not None]
     dust = [idx["current"].get("dust_z") for idx in indices if idx["current"].get("dust_z") is not None]
     flicker = [idx["current"].get("lambda_flicker_score") for idx in indices if idx["current"].get("lambda_flicker_score") is not None]
+    first_notice = [idx["current"].get("first_notice_score") for idx in indices if idx["current"].get("first_notice_score") is not None]
+    ridge_failure = [idx["current"].get("ridge_failure_score") for idx in indices if idx["current"].get("ridge_failure_score") is not None]
 
     red = states.count("RED")
     yellow = states.count("YELLOW")
@@ -687,7 +808,7 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
     else:
         global_state = "GREEN"
 
-    leaders = sorted(indices, key=lambda x: x["current"].get("risk_score") or -1, reverse=True)[:5]
+    leaders = sorted(indices, key=lambda x: x["current"].get("risk_pct") or -1, reverse=True)[:5]
     bulls = sorted(indices, key=lambda x: x["current"].get("bull_score") or -1, reverse=True)[:5]
 
     return {
@@ -700,11 +821,14 @@ def aggregate_summary(indices: List[Dict[str, Any]]) -> Dict[str, Any]:
         "median_bull": clean_float(np.nanmedian(bull_scores), 2) if bull_scores else None,
         "median_dust_z": clean_float(np.nanmedian(dust), 2) if dust else None,
         "median_lambda_flicker": clean_float(np.nanmedian(flicker), 2) if flicker else None,
+        "median_first_notice": clean_float(np.nanmedian(first_notice), 2) if first_notice else None,
+        "median_ridge_failure": clean_float(np.nanmedian(ridge_failure), 2) if ridge_failure else None,
         "top_risk": [
             {
                 "key": x["key"],
                 "name": x["name"],
                 "risk_score": x["current"].get("risk_score"),
+                "risk_pct": x["current"].get("risk_pct"),
                 "state": x["current"].get("state"),
             }
             for x in leaders
