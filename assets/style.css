@@ -160,3 +160,211 @@ tr:last-child td { border-bottom: 0; }
   .command-row { flex-wrap: wrap; }
   .policy, .brand-block p { white-space: normal; }
 }
+
+/* --- Compact single-screen tuning --- */
+
+:root {
+  --font-xs: 10px;
+  --font-sm: 11px;
+  --font-md: 12px;
+  --font-lg: 14px;
+}
+
+html,
+body {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-size: var(--font-md);
+  line-height: 1.25;
+}
+
+/* Prevent grid children from forcing the whole screen taller */
+main,
+.app,
+.shell,
+.dashboard,
+.dashboard-grid,
+.main-grid,
+.content-grid,
+.workspace-grid,
+.chart-panel,
+.side-panel,
+.subpanel,
+.panel,
+.panel-lite {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Smaller KPI strip */
+.kpis,
+.kpi-grid {
+  gap: 6px;
+}
+
+.kpi-card {
+  padding: 7px 8px;
+  min-height: 54px;
+  overflow: hidden;
+}
+
+.kpi-card span {
+  font-size: 9.5px;
+  line-height: 1.1;
+  letter-spacing: 0.035em;
+}
+
+.kpi-card b {
+  font-size: 16px;
+  line-height: 1.05;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.kpi-card em {
+  font-size: 10px;
+  line-height: 1.15;
+  margin-top: 3px;
+  max-height: 24px;
+  overflow: hidden;
+}
+
+/* Current-read cards */
+.metric-tile {
+  padding: 7px 8px;
+  min-height: 58px;
+  overflow: hidden;
+}
+
+.metric-tile span {
+  font-size: 9.5px;
+  line-height: 1.1;
+  letter-spacing: 0.035em;
+}
+
+.metric-tile b {
+  font-size: 14px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+
+.metric-tile p {
+  font-size: 10.5px;
+  line-height: 1.15;
+  margin: 3px 0 0;
+  max-height: 24px;
+  overflow: hidden;
+}
+
+/* Panels and tables */
+.subpanel {
+  padding: 8px;
+  overflow: hidden;
+}
+
+.subpanel h3 {
+  font-size: 11px;
+  line-height: 1.1;
+  margin: 0 0 3px;
+  font-weight: 600;
+}
+
+.hint {
+  font-size: 9.5px;
+  line-height: 1.1;
+  margin-bottom: 5px;
+}
+
+.table-wrap {
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+
+table {
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+th,
+td {
+  padding: 3px 5px;
+}
+
+.state-pill,
+.pill-button {
+  font-size: 9.5px;
+  line-height: 1.05;
+  padding: 3px 5px;
+}
+
+/* Narrative text: compact, no bottom clipping */
+.small-story,
+.audit-list,
+#globalNarrative,
+#chartNarrative,
+.notice {
+  font-size: 10.5px;
+  line-height: 1.22;
+}
+
+.small-story {
+  gap: 5px;
+}
+
+.callout {
+  padding: 6px 7px;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+/* Chart header */
+.chart-head,
+.chart-header {
+  min-height: 0;
+}
+
+#chartTitle {
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+#chartSubtitle {
+  font-size: 10.5px;
+  line-height: 1.15;
+}
+
+/* Keep the main chart from stealing too much vertical space */
+#mainChart {
+  min-height: 230px;
+  height: 100%;
+}
+
+/* Metatabs/buttons tighter */
+.meta-tab,
+.chart-tab,
+button,
+select {
+  font-size: 10.5px;
+  line-height: 1.1;
+}
+
+.meta-tab,
+.chart-tab {
+  padding: 5px 7px;
+}
+
+/* Bottom safety: let dense workspace panels scroll internally instead of clipping */
+.workspace-grid > *,
+.current-read,
+.narrative-panel,
+.matrix-panel,
+.scorecard-panel,
+.event-panel {
+  min-height: 0;
+  overflow: hidden;
+}
