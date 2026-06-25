@@ -1,78 +1,118 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DREAM Index Ridge Radar</title>
-  <meta name="description" content="Single-screen DREAM S2 structural-health radar for major equity indices." />
-  <link rel="stylesheet" href="assets/style.css" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DREAM Index Ridge Failure Radar</title>
+  <meta name="description" content="DREAM / S2 major index event radar: retained ridge, residual cloud, lambda_q flicker, and crash/bull event scorecards." />
+  <link rel="stylesheet" href="assets/style.css?v=20260625-split-state-2" />
 </head>
+
 <body>
-  <main class="screen-shell">
-    <header class="topbar panel-lite">
-      <div class="brand-block">
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
         <div class="eyebrow">DREAM / S2 / major index event radar</div>
         <h1>Index Ridge Failure Radar</h1>
         <p>Single-screen structural health monitor: retained ridge, residual cloud, lambda_q flicker, crash/bull event scorecards.</p>
       </div>
-      <div class="status-strip" aria-label="bundle status">
-        <div><span>Generated</span><b id="generatedAt">loading</b></div>
-        <div><span>Mode</span><b id="bundleMode">...</b></div>
-        <div><span>Global</span><b id="globalState">...</b></div>
-        <button id="themeBtn" type="button" aria-label="toggle theme">Dark</button>
+
+      <div class="top-meta">
+        <div class="meta-chip">
+          <span>Generated</span>
+          <b id="generatedAt">loading</b>
+        </div>
+        <div class="meta-chip">
+          <span>Mode</span>
+          <b id="bundleMode">loading</b>
+        </div>
+        <div class="meta-chip">
+          <span>Global</span>
+          <b id="globalState">loading</b>
+        </div>
+        <button id="themeBtn" class="soft-button" type="button">Dark</button>
       </div>
     </header>
 
-    <section id="notice" class="notice panel-lite">Loading <code>data/derived/market_ridge_radar.json</code>...</section>
+    <section id="notice" class="notice panel-lite">Loading live public-history bundle...</section>
 
-    <section class="command-row panel-lite">
-      <label>Index <select id="indexSelect"></select></label>
-      <label>Window <select id="viewSelect"><option value="recent">Recent</option><option value="long">Crash / bull lab</option></select></label>
-      <label>Target <select id="targetSelect"></select></label>
-      <div class="policy">Research-only. No h1 trades. No orders. Structural events, not next-bar forecasts.</div>
+    <section class="control-row">
+      <label>
+        <span>Index</span>
+        <select id="indexSelect"></select>
+      </label>
+
+      <label>
+        <span>Window</span>
+        <select id="viewSelect">
+          <option value="recent">Recent</option>
+          <option value="long">Long / events</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Target</span>
+        <select id="targetSelect"></select>
+      </label>
+
+      <div class="policy-note">
+        Research-only. No h1 trades. No orders. Structural events, not next-bar forecasts.
+      </div>
     </section>
 
-    <section id="kpis" class="kpi-row"></section>
+    <section id="kpis" class="kpis"></section>
 
-    <nav class="meta-tabs panel-lite" aria-label="dashboard views">
-      <button class="meta-tab active" data-meta="overview" type="button">Overview</button>
-      <button class="meta-tab" data-meta="ridge" type="button">Ridge Theater</button>
-      <button class="meta-tab" data-meta="dustlambda" type="button">Dust + lambda_q</button>
-      <button class="meta-tab" data-meta="scorecard" type="button">Scorecard</button>
-      <button class="meta-tab" data-meta="audit" type="button">Audit</button>
-    </nav>
+    <section class="meta-tabs">
+      <button class="meta-tab active" type="button" data-meta="overview">Overview</button>
+      <button class="meta-tab" type="button" data-meta="ridge">Ridge Theater</button>
+      <button class="meta-tab" type="button" data-meta="dustlambda">Dust + lambda_q</button>
+      <button class="meta-tab" type="button" data-meta="scorecard">Scorecard</button>
+      <button class="meta-tab" type="button" data-meta="audit">Audit</button>
+    </section>
 
-    <section class="dashboard-grid">
-      <section class="chart-card panel">
-        <div class="panel-head compact-head">
+    <main class="dashboard-grid">
+      <section class="chart-panel panel">
+        <div class="chart-head">
           <div>
             <h2 id="chartTitle">Ridge theater</h2>
-            <p id="chartSubtitle">price, retained ridge, dust envelope, risk, bull thrust</p>
+            <p id="chartSubtitle">close, retained ridge, dust envelope, correction risk, bull inertia</p>
           </div>
-          <div class="chart-tabs" aria-label="chart views">
-            <button class="chart-tab active" data-chart="ridge" type="button">Ridge</button>
-            <button class="chart-tab" data-chart="dust" type="button">Dust</button>
-            <button class="chart-tab" data-chart="lambda" type="button">lambda_q</button>
-            <button class="chart-tab" data-chart="score" type="button">Scores</button>
+
+          <div class="chart-tabs">
+            <button class="chart-tab active" type="button" data-chart="ridge">Ridge</button>
+            <button class="chart-tab" type="button" data-chart="dust">Dust</button>
+            <button class="chart-tab" type="button" data-chart="lambda">lambda_q</button>
+            <button class="chart-tab" type="button" data-chart="score">Scores</button>
           </div>
         </div>
-        <div id="mainChart" class="chart" role="img" aria-label="selected index chart"></div>
-        <div id="chartNarrative" class="chart-note"></div>
+
+        <div id="mainChart" class="main-chart"></div>
+        <div id="chartNarrative" class="chart-narrative"></div>
       </section>
 
-      <aside class="read-card panel">
-        <div class="panel-head compact-head">
-          <div><h2>Current read</h2><p id="selectedName">selected index</p></div>
-          <span id="selectedState" class="state-pill">...</span>
-        </div>
-        <div id="currentRead" class="read-grid"></div>
-        <div id="globalNarrative" class="narrate-box"></div>
-      </aside>
+      <aside class="side-panel">
+        <section class="selected-card panel">
+          <div class="selected-head">
+            <div>
+              <h2 id="selectedName">Selected index</h2>
+              <p>Current structural read</p>
+            </div>
+            <span id="selectedState" class="state-pill">NA</span>
+          </div>
 
-      <section id="workspace" class="workspace panel"></section>
-    </section>
-  </main>
+          <div id="currentRead" class="current-read"></div>
+        </section>
+
+        <section class="narrative-panel panel">
+          <div id="globalNarrative"></div>
+        </section>
+      </aside>
+    </main>
+
+    <section id="workspace" class="workspace"></section>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=20260625-split-state-2"></script>
 </body>
 </html>
