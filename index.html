@@ -5,14 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DREAM Index Ridge Failure Radar</title>
   <meta name="description" content="DREAM / S2 major index event radar: retained ridge, residual cloud, lambda_q flicker, and crash/bull event scorecards." />
-  <link rel="stylesheet" href="assets/style.css?v=20260625-split-state-2" />
+
+  <link rel="stylesheet" href="assets/style.css?v=20260625-layout-restore-1" />
 </head>
 
 <body>
-  <div class="app-shell">
-    <header class="topbar">
+  <div class="app-shell single-screen-shell">
+    <header class="topbar compact-topbar">
       <div class="brand">
-        <div class="eyebrow">DREAM / S2 / major index event radar</div>
+        <div class="eyebrow">DREAM / S2 / MAJOR INDEX EVENT RADAR</div>
         <h1>Index Ridge Failure Radar</h1>
         <p>Single-screen structural health monitor: retained ridge, residual cloud, lambda_q flicker, crash/bull event scorecards.</p>
       </div>
@@ -36,7 +37,7 @@
 
     <section id="notice" class="notice panel-lite">Loading live public-history bundle...</section>
 
-    <section class="control-row">
+    <section class="control-row compact-controls">
       <label>
         <span>Index</span>
         <select id="indexSelect"></select>
@@ -60,7 +61,7 @@
       </div>
     </section>
 
-    <section id="kpis" class="kpis"></section>
+    <section id="kpis" class="kpis kpi-grid"></section>
 
     <section class="meta-tabs">
       <button class="meta-tab active" type="button" data-meta="overview">Overview</button>
@@ -70,9 +71,9 @@
       <button class="meta-tab" type="button" data-meta="audit">Audit</button>
     </section>
 
-    <main class="dashboard-grid">
+    <main class="dashboard-grid main-grid">
       <section class="chart-panel panel">
-        <div class="chart-head">
+        <div class="chart-head chart-header">
           <div>
             <h2 id="chartTitle">Ridge theater</h2>
             <p id="chartSubtitle">close, retained ridge, dust envelope, correction risk, bull inertia</p>
