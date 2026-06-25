@@ -1,0 +1,104 @@
+# DREAM Index Ridge Radar universe.
+# Yahoo Finance tickers are used by the scheduled GitHub Action through yfinance.
+# The static front end never calls external APIs; it only reads data/derived/market_ridge_radar.json.
+universe:
+  - symbol: "^GSPC"
+    key: "SPX"
+    name: "S&P 500"
+    region: "US"
+    role: "core"
+  - symbol: "^NDX"
+    key: "NDX"
+    name: "Nasdaq 100"
+    region: "US"
+    role: "growth"
+  - symbol: "^DJI"
+    key: "DJI"
+    name: "Dow Jones Industrial Average"
+    region: "US"
+    role: "blue-chip"
+  - symbol: "^RUT"
+    key: "RUT"
+    name: "Russell 2000"
+    region: "US"
+    role: "small-cap"
+  - symbol: "^VIX"
+    key: "VIX"
+    name: "CBOE Volatility Index"
+    region: "US"
+    role: "volatility"
+  - symbol: "^FTSE"
+    key: "FTSE"
+    name: "FTSE 100"
+    region: "UK"
+    role: "global"
+  - symbol: "^GDAXI"
+    key: "DAX"
+    name: "DAX"
+    region: "Germany"
+    role: "global"
+  - symbol: "^FCHI"
+    key: "CAC"
+    name: "CAC 40"
+    region: "France"
+    role: "global"
+  - symbol: "^STOXX50E"
+    key: "SX5E"
+    name: "Euro Stoxx 50"
+    region: "Eurozone"
+    role: "global"
+  - symbol: "^N225"
+    key: "NIKKEI"
+    name: "Nikkei 225"
+    region: "Japan"
+    role: "global"
+  - symbol: "^HSI"
+    key: "HSI"
+    name: "Hang Seng"
+    region: "Hong Kong"
+    role: "global"
+  - symbol: "^GSPTSE"
+    key: "TSX"
+    name: "S&P/TSX Composite"
+    region: "Canada"
+    role: "global"
+  - symbol: "^AXJO"
+    key: "ASX200"
+    name: "ASX 200"
+    region: "Australia"
+    role: "global"
+  - symbol: "^KS11"
+    key: "KOSPI"
+    name: "KOSPI Composite"
+    region: "Korea"
+    role: "global"
+settings:
+  min_rows: 650
+  lookback_period: "max"
+  rolling_s2_window: 512
+  rolling_s2_stride: 21
+  ridge_spans: [21, 63, 126, 252]
+  dust_window: 63
+  baseline_window: 252
+  crash_targets:
+    - key: "dd_20d_8"
+      label: "20d >= 8% drawdown"
+      horizon_days: 20
+      threshold: -0.08
+    - key: "dd_60d_15"
+      label: "60d >= 15% drawdown"
+      horizon_days: 60
+      threshold: -0.15
+    - key: "dd_120d_20"
+      label: "120d >= 20% drawdown"
+      horizon_days: 120
+      threshold: -0.20
+  bull_targets:
+    - key: "up_60d_10"
+      label: "60d >= 10% advance"
+      horizon_days: 60
+      threshold: 0.10
+    - key: "up_120d_15"
+      label: "120d >= 15% advance"
+      horizon_days: 120
+      threshold: 0.15

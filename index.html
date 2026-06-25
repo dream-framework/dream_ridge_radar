@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DREAM Index Ridge Radar</title>
+  <meta name="description" content="Single-screen DREAM S2 structural-health radar for major equity indices." />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <main class="screen-shell">
+    <header class="topbar panel-lite">
+      <div class="brand-block">
+        <div class="eyebrow">DREAM / S2 / major index event radar</div>
+        <h1>Index Ridge Failure Radar</h1>
+        <p>Single-screen structural health monitor: retained ridge, residual cloud, lambda_q flicker, crash/bull event scorecards.</p>
+      </div>
+      <div class="status-strip" aria-label="bundle status">
+        <div><span>Generated</span><b id="generatedAt">loading</b></div>
+        <div><span>Mode</span><b id="bundleMode">...</b></div>
+        <div><span>Global</span><b id="globalState">...</b></div>
+        <button id="themeBtn" type="button" aria-label="toggle theme">Dark</button>
+      </div>
+    </header>
+
+    <section id="notice" class="notice panel-lite">Loading <code>data/derived/market_ridge_radar.json</code>...</section>
+
+    <section class="command-row panel-lite">
+      <label>Index <select id="indexSelect"></select></label>
+      <label>Window <select id="viewSelect"><option value="recent">Recent</option><option value="long">Crash / bull lab</option></select></label>
+      <label>Target <select id="targetSelect"></select></label>
+      <div class="policy">Research-only. No h1 trades. No orders. Structural events, not next-bar forecasts.</div>
+    </section>
+
+    <section id="kpis" class="kpi-row"></section>
+
+    <nav class="meta-tabs panel-lite" aria-label="dashboard views">
+      <button class="meta-tab active" data-meta="overview" type="button">Overview</button>
+      <button class="meta-tab" data-meta="ridge" type="button">Ridge Theater</button>
+      <button class="meta-tab" data-meta="dustlambda" type="button">Dust + lambda_q</button>
+      <button class="meta-tab" data-meta="scorecard" type="button">Scorecard</button>
+      <button class="meta-tab" data-meta="audit" type="button">Audit</button>
+    </nav>
+
+    <section class="dashboard-grid">
+      <section class="chart-card panel">
+        <div class="panel-head compact-head">
+          <div>
+            <h2 id="chartTitle">Ridge theater</h2>
+            <p id="chartSubtitle">price, retained ridge, dust envelope, risk, bull thrust</p>
+          </div>
+          <div class="chart-tabs" aria-label="chart views">
+            <button class="chart-tab active" data-chart="ridge" type="button">Ridge</button>
+            <button class="chart-tab" data-chart="dust" type="button">Dust</button>
+            <button class="chart-tab" data-chart="lambda" type="button">lambda_q</button>
+            <button class="chart-tab" data-chart="score" type="button">Scores</button>
+          </div>
+        </div>
+        <div id="mainChart" class="chart" role="img" aria-label="selected index chart"></div>
+        <div id="chartNarrative" class="chart-note"></div>
+      </section>
+
+      <aside class="read-card panel">
+        <div class="panel-head compact-head">
+          <div><h2>Current read</h2><p id="selectedName">selected index</p></div>
+          <span id="selectedState" class="state-pill">...</span>
+        </div>
+        <div id="currentRead" class="read-grid"></div>
+        <div id="globalNarrative" class="narrate-box"></div>
+      </aside>
+
+      <section id="workspace" class="workspace panel"></section>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

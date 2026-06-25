@@ -1,0 +1,56 @@
+name: Update DREAM index ridge radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "35 22 * * 1-5"
+  push:
+    branches: ["main"]
+    paths:
+      - "index.html"
+      - "assets/**"
+      - "scripts/**"
+      - "config/**"
+      - ".github/workflows/update.yml"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build index ridge radar bundle
+        timeout-minutes: 12
+        run: python -u scripts/build_index_radar.py
+      - name: Upload generated data artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dream-index-ridge-radar-data
+          path: data/derived/*.json
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
