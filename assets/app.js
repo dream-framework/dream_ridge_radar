@@ -1,8 +1,16 @@
 const $ = (id) => document.getElementById(id);
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const num = (v, d=1) => Number.isFinite(Number(v)) ? Number(v).toFixed(d) : 'NA';
-const pct = (v, d=1) => Number.isFinite(Number(v)) ? `${(Number(v)*100).toFixed(d)}%` : 'NA';
-const clamp = (v, lo=0, hi=100) => Math.max(lo, Math.min(hi, Number(v) || 0));
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}[c]));
+
+const num = (v, d = 1) => Number.isFinite(Number(v)) ? Number(v).toFixed(d) : 'NA';
+const pct = (v, d = 1) => Number.isFinite(Number(v)) ? `${(Number(v) * 100).toFixed(d)}%` : 'NA';
+const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Number(v) || 0));
 
 let bundle = null;
 let activeIndex = null;
@@ -24,11 +32,12 @@ function idx() {
 
 function dataSeries() {
   const i = idx();
-  return i ? (($("viewSelect")?.value || 'recent') === 'long' ? i.series_long : i.series_recent) || [] : [];
+  return i ? (($('viewSelect')?.value || 'recent') === 'long' ? i.series_long : i.series_recent) || [] : [];
 }
 
 function targetLabel(key) {
-  return [...(bundle.targets?.crash || []), ...(bundle.targets?.bull || [])].find(t => t.key === key)?.label || key || 'target';
+  return [...(bundle.targets?.crash || []), ...(bundle.targets?.bull || [])]
+    .find(t => t.key === key)?.label || key || 'target';
 }
 
 function bar(value, kind) {
@@ -45,11 +54,10 @@ async function boot() {
   bindStaticEvents();
 
   try {
-    const res = await fetch('data/derived/market_ridge_radar.json', { cache: 'no-store' });
+    const res = await fetch(`data/derived/market_ridge_radar.json?v=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     bundle = await res.json();
-
     initializeControls();
 
     $('notice').className = bundle.metadata?.mode === 'synthetic_demo'
@@ -281,7 +289,7 @@ function drawChart() {
         { name:'Env hi', type:'line', yAxisIndex:0, data:data.map(d => d.envelope_hi), showSymbol:false, lineStyle:{width:.7,color:p.env}, areaStyle:{color:p.env} },
         { name:'Env lo', type:'line', yAxisIndex:0, data:data.map(d => d.envelope_lo), showSymbol:false, lineStyle:{width:.7,color:p.env} },
         { name:'Risk pct', type:'bar', yAxisIndex:1, data:data.map(d => d.risk_pct ?? d.risk_score), itemStyle:{color:p.risk, opacity:.24} },
-        { name:'Bull', type:'bar', yAxisIndex:1, data:data.map(d => d.bull_score), itemStyle:{color:p.bull, opacity:.18} }
+        { name:'Bull inertia', type:'bar', yAxisIndex:1, data:data.map(d => d.bull_score), itemStyle:{color:p.bull, opacity:.18} }
       ]
     };
   } else if (activeChart === 'dust') {
@@ -422,7 +430,7 @@ function matrixTable(limit) {
       const c = i.current || {};
       return `<tr>` +
         `<td><button class="pill-button" onclick="selectIndex('${esc(i.key)}')">${esc(i.key)}</button></td>` +
-        `<td><span class="${stateClass(c.state)}">${esc(c.state)}</span></td>` +
+        `<td><span class="${stateClass(c.state)}">${esc(c.state || 'NA')}</span></td>` +
         `<td><span class="${stateClass(c.ridge_state)}">${esc(c.ridge_state || 'NA')}</span></td>` +
         `<td><span class="${stateClass(c.dust_state)}">${esc(c.dust_state || 'NA')}</span></td>` +
         `<td class="num bar-cell">${num(c.risk_pct, 0)}${bar(c.risk_pct ?? c.risk_score)}</td>` +
